@@ -1,4 +1,5 @@
 // 副作用：离线向量索引的本地 JSON 持久化（读写文件 + 模块级单次加载）
+import { log } from '../utils/logger.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import type { KnowledgeEntry } from './types.js'
@@ -18,7 +19,7 @@ export function loadVectorIndex(): Promise<VectorIndexFile | null> {
     indexPromise = readFile(vectorIndexPath(), 'utf8')
       .then((text) => parseVectorIndex(JSON.parse(text)))
       .catch((err: NodeJS.ErrnoException) => {
-        if (err.code !== 'ENOENT') console.warn('[kb] 向量索引加载失败，回退实时向量化:', err)
+        if (err.code !== 'ENOENT') log.warn('向量索引加载失败，回退实时向量化', err)
         return null
       })
   }

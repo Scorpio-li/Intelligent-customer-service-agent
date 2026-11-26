@@ -11,6 +11,7 @@
 //   3. 建议在 prompt.ts 里给 AI 加一句调用时机提示
 import { tool } from 'ai'
 import { z } from 'zod'
+import { log } from '../utils/logger.js'
 import { queryOrder } from '../mock/orders.js'
 import { getReturnPolicy } from './knowledge.js'
 
@@ -24,7 +25,7 @@ export const tools = {
     }),
     execute: async ({ orderId }) => {
       const result = queryOrder(orderId)
-      console.log(`[tool] queryOrder(${orderId})`)
+      log.tool('queryOrder(%s)', orderId)
       return result
     }
   }),
@@ -38,7 +39,7 @@ export const tools = {
     }),
     execute: async ({ productType }) => {
       const result = getReturnPolicy(productType)
-      console.log(`[tool] askReturnPolicy(${productType})`)
+      log.tool('askReturnPolicy(%s)', productType)
       return result
     }
   }),
@@ -50,7 +51,7 @@ export const tools = {
     }),
     execute: async ({ reason }) => {
       const ticketId = 'TK' + Date.now().toString().slice(-8)
-      console.log(`[tool] transferToHuman(${reason}) → ${ticketId}`)
+      log.tool('transferToHuman(%s) → %s', reason, ticketId)
       return {
         ticketId,
         estimatedWaitTime: '5 分钟',

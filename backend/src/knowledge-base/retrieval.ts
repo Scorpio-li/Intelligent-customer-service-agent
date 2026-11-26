@@ -1,4 +1,5 @@
 // 混合检索编排：BM25 与向量并行召回 → RRF 融合 → rerank 精排；向量不可用时降级本地索引
+import { log } from '../utils/logger.js'
 import { rankByBm25 } from './bm25.js'
 import { embedTexts, getEntryEmbedding } from './embeddings.js'
 import { rrfFuse } from './fusion.js'
@@ -75,7 +76,7 @@ async function recallVectors(query: string, intent: Intent, candidates: Knowledg
 
     return { hits, degraded: true }
   } catch (err) {
-    console.warn('[kb] 向量召回失败，仅使用 BM25:', err)
+    log.warn('向量召回失败，仅使用 BM25', err)
     return { hits: [], degraded: true }
   }
 }

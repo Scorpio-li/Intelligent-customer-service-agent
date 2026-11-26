@@ -1,4 +1,5 @@
 // 副作用：DashScope gte-rerank 精排；未启用或失败返回 null，由检索层保持 RRF 顺序
+import { log } from '../utils/logger.js'
 import { recordRerankCall } from './metrics.js'
 
 const ENDPOINT = 'https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank'
@@ -68,7 +69,7 @@ export async function rerankDocuments(
     recordRerankCall(documents.length, json.usage?.total_tokens)
     return hits
   } catch (err) {
-    console.warn('[kb] rerank 失败，保持 RRF 顺序:', err)
+    log.warn('rerank 失败，保持 RRF 顺序', err)
     return null
   } finally {
     clearTimeout(timer)

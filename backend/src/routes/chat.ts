@@ -17,6 +17,7 @@
 // 15 秒一次的 `: ping` 心跳保持长连接，防止代理超时断开
 import { Router } from 'express'
 import { runAgent } from '../agent/index.js'
+import { log } from '../utils/logger.js'
 import { classifyIntent, retrieve } from '../knowledge-base/index.js'
 import type { ChatRequest } from '../types/index.js'
 
@@ -46,7 +47,7 @@ router.post('/', async (req, res) => {
     const r = await retrieve(userText, intent)
 
     if (r.hit) {
-      console.log('[kb] hit', intent, r.stage, r.score)
+      log.chat('hit intent=%s stage=%s score=%s', intent, r.stage, r.score)
       sse(res, 'rag-hit', {
         intent,
         stage: r.stage,
@@ -60,7 +61,7 @@ router.post('/', async (req, res) => {
       return
     }
 
-    console.log('[kb] miss', intent)
+    log.chat('miss intent=%s', intent)
   }
 
   if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
@@ -117,7 +118,7 @@ router.post('/', async (req, res) => {
 
     sse(res, 'done', {})
   } catch (err: unknown) {
-    console.error('[chat] Agent 运行出错:', err)
+    log.error('Agent 运行出错', err)
     sse(res, 'error', {
       message: err instanceof Error ? err.message : 'Agent 运行出错'
     })

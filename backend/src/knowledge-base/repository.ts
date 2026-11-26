@@ -1,4 +1,5 @@
 // 副作用：知识条目数据源——Qdrant 为权威存储，进程内快照缓存（TTL + 写后失效），不可用时降级本地种子
+import { log } from '../utils/logger.js'
 import { KNOWLEDGE_ENTRIES } from './data.js'
 import { embedTexts, getEmbeddingModel } from './embeddings.js'
 import { deleteEntryPoint, countPoints, ensureCollection, qdrantEnabled, scrollEntries, searchEntries, upsertEntries, type VectorHit } from './qdrant.js'
@@ -44,7 +45,7 @@ function invalidateSnapshot(): void {
 export async function initRepository(): Promise<void> {
   if (!qdrantEnabled()) {
     source = 'local'
-    console.log('[kb] KB_VECTOR_STORE=local，使用本地种子 + 离线索引')
+    log.kb('KB_VECTOR_STORE=local，使用本地种子 + 离线索引')
     return
   }
 
@@ -52,15 +53,15 @@ export async function initRepository(): Promise<void> {
     await ensureCollection()
     if ((await countPoints()) === 0) {
       const count = await syncEntries(KNOWLEDGE_ENTRIES)
-      console.log(`[kb] Qdrant collection 为空，已写入 ${count} 条种子条目`)
+      log.kb('Qdrant collection 为空，已写入 %d 条种子条目', count)
     }
     snapshot = await scrollEntries()
     loadedAt = Date.now()
     source = 'qdrant'
-    console.log(`[kb] Qdrant 就绪：${snapshot.length} 条条目 @ ${process.env.QDRANT_URL || 'http://localhost:6333'}`)
+    log.kb('Qdrant 就绪：%d 条条目 @ %s', snapshot.length, process.env.QDRANT_URL || 'http://localhost:6333')
   } catch (err) {
     source = 'local'
-    console.warn('[kb] Qdrant 初始化失败，降级本地种子 + 离线索引:', err)
+    log.warn('Qdrant 初始化失败，降级本地种子 + 离线索引', err)
   }
 }
 
@@ -74,7 +75,7 @@ export async function getEntries(): Promise<StoredKnowledgeEntry[]> {
     loadedAt = Date.now()
     return snapshot
   } catch (err) {
-    console.warn('[kb] Qdrant 读取失败，本轮使用本地种子:', err)
+    log.warn('Qdrant 读取失败，本轮使用本地种子', err)
     return localEntries()
   }
 }
@@ -111,7 +112,7 @@ export async function searchByVector(queryVector: number[], intent: Intent, limi
   try {
     return await searchEntries(queryVector, { intent, modelVersion: getEmbeddingModel() }, limit)
   } catch (err) {
-    console.warn('[kb] Qdrant 向量检索失败，降级本地索引:', err)
+    log.warn('Qdrant 向量检索失败，降级本地索引', err)
     return null
   }
 }

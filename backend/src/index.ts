@@ -16,6 +16,7 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import { log } from './utils/logger.js'
 import chatRouter from './routes/chat.js'
 import kbRouter from './routes/kb.js'
 import metricsRouter from './routes/metrics.js'
@@ -44,6 +45,6 @@ app.use('/api/metrics', metricsRouter)
 // 先完成知识库初始化（Qdrant 不可用时自动降级本地模式），再开始接收请求
 initRepository().finally(() => {
   app.listen(PORT, () => {
-    console.log(`[backend] Agent server listening on http://localhost:${PORT}`)
+    log.server('Agent server listening on http://localhost:%d', PORT)
   })
 })
