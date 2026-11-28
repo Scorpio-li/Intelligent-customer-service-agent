@@ -25,11 +25,52 @@
 | Embedding query 级缓存 | 0 | ⚠️ 高频相同 query 每次实时向量化，浪费成本 |
 | metrics 存储 | 进程内，重启清零 | ⚠️ 无法聚合多实例、无历史趋势 |
 
+> 注：本表是 2026-11-26 改造**前**的基线快照，用于对比。其中「0 测试」「18 处 console」「无 CORS / RateLimit / healthz」三项已在 P0 修复，见第二节现状。
+
 ---
 
-## 二、P0 · 必做（架构安全网，一周内）
+## 二、P0 · 已完成（架构安全网，2026-11-26 落地）
 
-### P0-1 测试基础设施（零测试 → 有测试）
+### P0-1 测试基础设施（零测试 → 有测试）✅ 已完成
+
+**交付物（2026-11-26）**：
+- `backend/vitest.config.ts`（Node environment，ESM `fileURLToPath` 派生 `__dirname`）
+- 依赖：`vitest`、`@types/debug`（dev）、`debug`（runtime）
+- `package.json` 新增 `test` / `test:watch` / `test:coverage` 三个脚本
+- 5 个测试文件 / **57 个用例全部通过**：`bm25.test.ts`(13) · `fusion.test.ts`(7) · `similarity.test.ts`(8) · `intent.test.ts`(11) · `vector-index.test.ts`(18)
+- 覆盖正常值 + 边界条件 + 数学性质（RRF 单调性、余弦 [-1,1]、hash 64 位 hex 等）
+
+**与原始建议的差异**：`retrieval.test.ts` 降级链测试和 `__fixtures__/test-entries.ts` **未落地**（需要 mock embeddings / qdrant），留到后续。当前验证基线：`tsc --noEmit` 零错误 + `pnpm test` 57/57。
+
+### P0-2 结构化日志（console → Pino 或 debug）✅ 已完成
+
+**交付物（2026-11-26）**：
+- 新增 `backend/src/utils/logger.ts`：`debug` 包 + 6 个模块命名空间（`app:kb` / `app:agent` / `app:tool` / `app:chat` / `app:kb-admin` / `app:server`）；`log.warn` / `log.error` 走 `console.warn/error` 兜底，保证错误不丢
+- 8 个文件共 **18 处 `console.*` 全部替换**：repository.ts(6) · chat.ts(3) · tools.ts(3) · kb.ts(2) · retrieval.ts(1) · rerank.ts(1) · vector-store.ts(1) · index.ts(1)
+- 使用方式：`DEBUG=app:* pnpm dev` 全开，`DEBUG=app:kb` 只看知识库；未设 `DEBUG` 时 info 级别零成本短路
+
+**残留说明**：`logger.ts` 内部仍有 6 处 `console.warn/error`，这是 warn/error 的兜底出口，**设计上必须保留**。
+
+### P0-3 CORS + Rate Limit + Health Check（三条同时加）✅ 已完成
+
+**交付物（2026-11-26）**：`backend/src/index.ts` 重写（50 → 138 行），全部落地并冒烟验证：
+
+| 能力 | 实现 |
+|------|------|
+| CORS 白名单 | `ALLOWED_ORIGINS` 环境变量；无 Origin 头放行；拒绝时不回 ACAO 头（非 500） |
+| Rate Limit 三档 | `/api/chat` 30/min · `/api/kb` 10/min · `/api/metrics` 60/min（`express-rate-limit`） |
+| 健康检查 | `GET /healthz`（liveness）+ `GET /readyz`（readiness，含 Qdrant 探测，降级返回 503） |
+| 额外安全网 | 404 JSON fallback + 全局错误兜底（防未捕获异常 crash） |
+
+**验证结果**：`tsc` 0 错误；`/healthz` 200、`/readyz` 200 `qdrant:"connected"`；`Origin: https://evil.com` 预检不带 ACAO 头、`Origin: http://localhost:5173` 返回 204 + 完整 CORS 头。
+
+**附**：新增环境变量 `ALLOWED_ORIGINS` 已同步到 `backend/.env.example` 与根 `README.md` 环境变量表。
+
+---
+
+### 原始建议方案（保留作实施参考）
+
+#### P0-1 测试基础设施（原始建议）
 
 **问题**：3135 行代码 0 测试，每次改 retrieval 阈值、改 BM25 权重、换 rerank 模型都靠手动 eval 脚本跑一遍，无法建立 CI 门禁。
 
@@ -56,7 +97,7 @@ backend/
 
 **预期效果**：retrieval 阈值从 0.4 改到 0.3 跑一遍就能看到 recall 是否掉、BM25 权重从 3:2:1 改到 4:1:1 立即知道 MRR 变化。
 
-### P0-2 结构化日志（console → Pino 或 debug）
+#### P0-2 结构化日志（原始建议）
 
 **问题**：18 处 `console.log/warn/error`，在 Qdrant 降级、rerank 失败、Agent 报错、工具调用时都有，但生产环境无法：
 - 按 `[kb]` / `[agent]` / `[tool]` 模块过滤
@@ -83,7 +124,7 @@ export const log = {
 
 **不要上 Pino 就因为"结构化"**：项目体量小（3135 行），debug 包 4KB 足够。如果未来要发生产环境 JSON 格式，再换 Pino。
 
-### P0-3 CORS + Rate Limit + Health Check（三条同时加）
+#### P0-3 CORS + Rate Limit + Health Check（原始建议）
 
 这是生产部署的最低三条安全线：
 
@@ -179,6 +220,61 @@ knowledge-base/
 
 **原则**：strategies 是纯函数（给定候选 + query → 返回排序结果），retrieval.ts 是副作用（调外部 API、埋 metrics）。strategies 可以独立做 property-based 测试。
 
+### P1-5 Prompt 稳定性与 RAG 上下文注入（待优化）
+
+**核查结论（2026-11-27）**：`CUSTOMER_SERVICE_PROMPT`（[prompt.ts](../backend/src/agent/prompt.ts)）是纯静态模板字符串，无 `${}` 插值、无时间戳、无 traceId；三个工具的 description / zod schema 也全是字面量。因此 `system + tools` 这个 cacheable prefix 逐字节稳定，prompt caching 可以稳定命中。但核查中发现两个待修问题：
+
+#### 问题 A：`role: 'system'` 透传，存在缓存污染风险
+
+`agent/convert.ts` 把前端消息原样透传，`role: 'system'` 也放行：
+
+```ts
+return { role: m.role as 'system' | 'user' | 'assistant', content: m.content }
+```
+
+当前前端只发 `user` / `assistant`，所以尚未出问题。一旦有人往 messages 里塞 system 消息（常见做法是拼当前时间、用户名、"今天是 2026 年"），system 部分就会每次请求都不同，缓存全部失效，成本和首字延迟一起回退。
+
+**建议方案**：
+1. `toSdkMessages()` 里丢弃 `role === 'system'` 的消息（或直接返回 400），保证 system 只有 `CUSTOMER_SERVICE_PROMPT` 一个来源
+2. 补一个单元测试：输入含 system 消息 → 输出不含 system 消息
+3. 未来确实需要注入动态上下文（当前时间、用户等级、命中的 KB 内容）时，统一拼到 **user message 前缀**，不要放 system
+
+#### 问题 B：prompt 声称"使用下面给出的知识库内容"，但 KB 内容从未注入
+
+`agent/prompt.ts` 第 23 行写着：
+
+> 优先使用下面给出的知识库内容作答，并在句末标注来源编号，如 [1]。
+
+而实际链路是：`routes/chat.ts` 命中 → 直接 SSE 返回条目原文（不调 LLM）；未命中 → `runAgent(req)` 只拿到 `req.messages`，**KB 条目一条都没有进上下文**。结果：
+
+- prompt 里这条规则永远空转（"下面"并没有内容）
+- 未命中时 LLM 完全不知道知识库里有什么，只能靠模型常识作答，回答不受知识库约束
+
+**建议方案（补 RAG 能力，同时不破坏缓存）**：
+1. 在 `routes/chat.ts` 的未命中分支，把 `retrieve()` 的 top-k 条目作为参考资料拼成文本块，**拼到本次 user message 前面**：
+
+```
+【参考资料】
+[1] 配送时效：全国一般 3-5 天到货
+[2] 退换货政策：服装支持七天无理由退换
+
+【用户问题】
+<原始问题>
+```
+
+2. system prompt 保持完全静态 —— 参考资料每次不同，放进 system 会把缓存打穿
+3. 用一个比 `KB_RERANK_THRESHOLD` 更低的门槛（如 0.05）决定"给不给参考资料"，避免把完全不相关的条目塞进去
+4. 加 metrics：`agent_with_context_total` / `agent_context_tokens`，观察参考资料是否被真正引用
+
+**验证方式（两分钟）**：
+```bash
+# 1. system 稳定性：连续两次请求，比对抓到的 system 字段字节是否完全一致
+# 2. 透传风险：手动构造 role=system 的消息，确认当前会被透传（修复后应被丢弃）
+# 3. 空转问题：问一个知识库里存在但关键词不命中的边缘问题，看 LLM 是否引用条目
+```
+
+**优先级说明**：问题 A 是防御性改动（约 5 行 + 1 个测试），属于低投入高保险；问题 B 是能力补全，改完会改变未命中分支的回答质量，建议先补 eval 基线再改，避免"感觉变好了"但指标无法验证。
+
 ---
 
 ## 四、P2 · 中期（业务能力扩展，按需）
@@ -248,13 +344,14 @@ knowledge-base/
 ## 六、路线图（按投入产出排序）
 
 ```
-Week 1 ── P0-1 测试基础设施（vitest + pure functions 先起）
-       ── P0-2 结构化日志（debug 包，1 天替换完 18 处）
-       ── P0-3 CORS + Rate Limit + Health Check（各 10 行）
+Week 1 ── P0-1 测试基础设施（vitest + pure functions 先起）          ✅ 已完成
+       ── P0-2 结构化日志（debug 包，1 天替换完 18 处）              ✅ 已完成
+       ── P0-3 CORS + Rate Limit + Health Check（各 10 行）         ✅ 已完成
 Week 2 ── P1-1 Prometheus metrics（prom-client + /metrics）
        ── P1-2 Embedding query 级缓存（5 行 Map + TTL）
 Week 3 ── P1-3 OpenTelemetry 链路追踪（可选，不阻塞其他）
        ── P1-4 Retrieval 模块化（拆 strategies 纯函数）
+       ── P1-5 Prompt 稳定性：丢弃 system 透传（5 行）→ KB 上下文注入（需 eval 基线）
 Month 2 ── P2-1 / P2-2 / P2-3 按需加
 Month 3+ ── P3-1 / P3-2 / P3-3 战略方向
 ```
